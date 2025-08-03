@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { StyleSheet, View, Text, Platform, Switch } from 'react-native';
+import { StyleSheet, View, Text, Platform, Switch, Animated } from 'react-native';
 import * as Location from 'expo-location';
 
 export default function SpeedLimitScreen() {
@@ -8,6 +8,7 @@ export default function SpeedLimitScreen() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [debugMode, setDebugMode] = useState<boolean>(true);
   const debugInterval = useRef<NodeJS.Timeout | null>(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
 
   // Debug mode: Simulate variable speeds
   useEffect(() => {
@@ -85,6 +86,32 @@ export default function SpeedLimitScreen() {
   // Check if current speed exceeds the speed limit
   const isSpeeding = speed !== null && speed > speedLimit;
 
+  // Start/stop pulse animation based on speeding state
+  useEffect(() => {
+    if (isSpeeding) {
+      // Create a pulsing animation
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 500,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      
+      pulse.start();
+      return () => pulse.stop();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [isSpeeding, pulseAnim]);
+
   return (
     <View style={styles.container}>
       <View style={styles.speedLimitContainer}>
@@ -92,8 +119,18 @@ export default function SpeedLimitScreen() {
           styles.speedLimitCircle,
           isSpeeding && styles.speedingCircle
         ]}>
-          <Text style={styles.speedLimitText}>{speedLimit}</Text>
-          <Text style={styles.kmhText}>km/h</Text>
+          <Text style={[
+            styles.speedLimitText,
+            isSpeeding && styles.speedingText
+          ]}>
+            {speedLimit}
+          </Text>
+          <Text style={[
+            styles.kmhText,
+            isSpeeding && styles.speedingText
+          ]}>
+            km/h
+          </Text>
         </View>
         
         <View style={styles.currentSpeedContainer}>
@@ -106,7 +143,14 @@ export default function SpeedLimitScreen() {
             </Text>
           )}
           {isSpeeding && (
-            <Text style={styles.warningText}>Slow down!</Text>
+            <Animated.Text 
+              style={[
+                styles.warningText,
+                { transform: [{ scale: pulseAnim }] }
+              ]}
+            >
+              SLOW DOWN!
+            </Animated.Text>
           )}
         </View>
         
@@ -153,25 +197,28 @@ const styles = StyleSheet.create({
     width: 250,
     height: 250,
     borderRadius: 125,
-    backgroundColor: '#ff3b30',
+    backgroundColor: 'white',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 5,
-    borderColor: '#000',
+    borderWidth: 10,
+    borderColor: 'red',
     marginBottom: 30,
   },
   speedingCircle: {
-    backgroundColor: '#ff0000',
+    backgroundColor: 'red',
     transform: [{ scale: 1.05 }],
   },
   speedLimitText: {
     fontSize: 120,
     fontWeight: 'bold',
+    color: 'black',
+  },
+  speedingText: {
     color: 'white',
   },
   kmhText: {
     fontSize: 24,
-    color: 'white',
+    color: 'black',
     fontWeight: '600',
     marginTop: -15,
   },
@@ -193,10 +240,15 @@ const styles = StyleSheet.create({
   },
   warningText: {
     color: 'red',
-    fontSize: 20,
-    fontWeight: 'bold',
+    fontSize: 36,
+    fontWeight: '900',
     textTransform: 'uppercase',
     textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+    marginTop: 15,
+    letterSpacing: 1,
   },
   errorText: {
     color: 'red',
