@@ -10,20 +10,18 @@
     "splash": {
       "image": "./assets/images/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#4caf50"
     },
     "assetBundlePatterns": [
-      "**/*"
+      "assets/**/*",
+      "app/**/*"
     ],
     "extra": {
       "speedLimitDataPath": "./assets/data/speedLimits.json"
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.yourcompany.maxvel",
-      "config": {
-        "googleMapsApiKey": "YOUR_IOS_GOOGLE_MAPS_API_KEY"
-      }
+      "bundleIdentifier": "com.yourcompany.maxvel"
     },
     "android": {
       "adaptiveIcon": {
@@ -31,11 +29,6 @@
         "backgroundColor": "#ffffff"
       },
       "package": "com.yourcompany.maxvel",
-      "config": {
-        "googleMaps": {
-          "apiKey": "YOUR_ANDROID_GOOGLE_MAPS_API_KEY"
-        }
-      },
       "edgeToEdgeEnabled": true
     },
     "web": {
