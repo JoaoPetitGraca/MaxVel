@@ -9,7 +9,8 @@ import {
   TouchableOpacity, 
   Dimensions,
   SafeAreaView,
-  Platform
+  Platform,
+  Linking
 } from 'react-native';
 import * as Location from 'expo-location';
 import { speedLimitService } from '../services/speedLimitService';
@@ -48,116 +49,110 @@ export default function SpeedLimitScreen() {
   const debugInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
-  // Initialize speed limit service when component mounts
+  // Update speed limit based on location
+  const updateSpeedLimit = useCallback(async (lat: number, lng: number) => {
+    if (!speedLimitService.isReady) {
+      console.log('⏳ Speed limit service not ready, skipping update');
+      return;
+    }
+    console.log(`🔄 Updating speed limit for ${lat}, ${lng}`);
+    const location = { coords: { latitude: lat, longitude: lng } } as Location.LocationObject;
+    const result = await speedLimitService.getSpeedLimitAtLocationWithInfo(location);
+    if (result) {
+      setSpeedLimit(result.speedLimit);
+      setCurrentSegment(result.segment);
+      setDistanceToSegment(result.distance);
+      console.log(`✅ Found speed limit: ${result.speedLimit} km/h at ${result.distance.toFixed(2)}m`);
+    } else {
+      setSpeedLimit(10); // Default speed limit when no segment is found
+      setCurrentSegment(null);
+      setDistanceToSegment(null);
+      console.log('🤷 No matching segment found, using default speed limit');
+    }
+  }, []);
+
+  // Effect for one-time initialization and setting initial location
   useEffect(() => {
-    console.log('🏁 Component mounted, initializing speed limit service...');
-    
     const init = async () => {
+      console.log('🏁 Component mounted, initializing...');
+      setIsLoading(true);
       try {
-        console.log('🔄 Starting speed limit service initialization...');
         await speedLimitService.initialize();
-        console.log('✅ Speed limit service initialized successfully');
-        
-        // Set initial speed for debug mode
-        if (debugMode) {
-          console.log('🔧 Debug mode enabled, setting initial speed to 50 km/h');
-          setSpeed(50); // Default speed for debug mode
-          
-          // Set initial test location in San Francisco
-          const testLocation = {
-            coords: {
-              latitude: 37.7749,  // San Francisco
-              longitude: -122.4194,
-              altitude: null,
-              accuracy: 10,
-              altitudeAccuracy: null,
-              heading: null,
-              speed: null
-            },
-            timestamp: Date.now(),
-          };
-          
-          setTappedLocation(testLocation);
-          updateSpeedLimit(testLocation.coords.latitude, testLocation.coords.longitude);
-        } else {
-          // In non-debug mode, request location permission and set up location watcher
+        console.log('✅ Speed limit service initialized.');
+
+        if (!debugMode) {
           const { status } = await Location.requestForegroundPermissionsAsync();
           if (status !== 'granted') {
             setErrorMsg('Permission to access location was denied');
+            setIsLoading(false);
             return;
           }
-          
-          // Get initial location
-          const location = await Location.getCurrentPositionAsync({});
-          setTappedLocation(location);
-          updateSpeedLimit(location.coords.latitude, location.coords.longitude);
-          
-          // Watch for location updates
-          const locationSubscription = await Location.watchPositionAsync(
-            {
-              accuracy: Location.Accuracy.High,
-              distanceInterval: 10, // Update every 10 meters
-              timeInterval: 1000,   // Or every second, whichever comes first
+
+          // Set initial default location near Chidenguele
+          const initialLocation = {
+            coords: {
+              latitude: -24.912038,
+              longitude: 34.198707,
+              altitude: null, accuracy: 5, altitudeAccuracy: null, heading: null, speed: 0,
             },
-            (newLocation) => {
-              console.log('📍 Location updated:', newLocation.coords);
-              setTappedLocation(newLocation);
-              updateSpeedLimit(newLocation.coords.latitude, newLocation.coords.longitude);
-            }
-          );
-          
-          // Cleanup subscription on unmount
-          return () => {
-            if (locationSubscription && 'remove' in locationSubscription) {
-              locationSubscription.remove();
-            }
-          };
+            timestamp: Date.now(),
+          } as Location.LocationObject;
+
+          console.log('📍 Setting initial location:', initialLocation.coords);
+          setTappedLocation(initialLocation);
+          await updateSpeedLimit(initialLocation.coords.latitude, initialLocation.coords.longitude);
         }
-        
-        setIsLoading(false);
-        console.log('✅ Initialization complete, UI should now be interactive');
       } catch (error) {
-        console.error('❌ Error initializing speed limit service:', error);
+        console.error('❌ Error during initialization:', error);
         setErrorMsg('Failed to initialize speed limit service');
+      } finally {
         setIsLoading(false);
+        console.log('✅ Initialization complete.');
       }
     };
-    
+
     init();
-    
-    return () => {
-      console.log('🧹 Cleaning up speed limit service...');
-      // Cleanup if needed
-    };
-  }, [debugMode]);
+  }, [debugMode, updateSpeedLimit]); // Reruns only when debugMode changes
 
-  // Update speed limit based on location
-  const updateSpeedLimit = useCallback(async (lat: number, lng: number) => {
-    try {
-      const location = {
-        coords: { 
-          latitude: lat, 
-          longitude: lng,
-          altitude: null,
-          accuracy: null,
-          altitudeAccuracy: null,
-          heading: null,
-          speed: null
-        },
-        timestamp: Date.now()
-      } as Location.LocationObject;
-
-      // Get speed limit and additional segment info
-      const { speedLimit, segment, distance } = await speedLimitService.getSpeedLimitAtLocationWithInfo(location);
-      
-      setSpeedLimit(speedLimit);
-      setCurrentSegment(segment || null);
-      setDistanceToSegment(distance);
-    } catch (error) {
-      console.error('Error updating speed limit:', error);
-      setErrorMsg('Error getting speed limit data');
+  // Effect for managing the location watcher
+  useEffect(() => {
+    if (debugMode) {
+      // Handle debug mode simulation if needed, or clear watcher
+      return;
     }
-  }, []);
+
+    let locationSubscription: Location.LocationSubscription | null = null;
+
+    const startWatching = async () => {
+      console.log('🛰️ Starting location watcher...');
+      locationSubscription = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          distanceInterval: 1, // More sensitive updates
+          timeInterval: 1000,
+        },
+        (newLocation) => {
+          console.log('📍 Location updated:', newLocation.coords);
+          if (newLocation.coords.speed !== null && newLocation.coords.speed >= 0) {
+            const speedInKmh = newLocation.coords.speed * 3.6;
+            setSpeed(speedInKmh);
+          }
+          setTappedLocation(newLocation);
+          updateSpeedLimit(newLocation.coords.latitude, newLocation.coords.longitude);
+        }
+      );
+    };
+
+    startWatching();
+
+    // Cleanup function to remove the watcher
+    return () => {
+      if (locationSubscription) {
+        console.log('🧹 Stopping location watcher...');
+        locationSubscription.remove();
+      }
+    };
+  }, [debugMode, updateSpeedLimit]); // Reruns when debugMode or the update function changes
 
   // Debug mode: Simulate variable speeds and watch for location changes
   useEffect(() => {
@@ -332,6 +327,18 @@ export default function SpeedLimitScreen() {
               <Text style={styles.coordinateText}>
                 🌍 {tappedLocation.coords.latitude.toFixed(6)}, {tappedLocation.coords.longitude.toFixed(6)}
               </Text>
+              <View style={styles.mapLinksContainer}>
+                <TouchableOpacity
+                  style={styles.mapLinkButton}
+                  onPress={() => Linking.openURL(`https://www.google.com/maps/search/?api=1&query=${tappedLocation.coords.latitude},${tappedLocation.coords.longitude}`)}>
+                  <Text style={styles.mapLinkText}>Open in Google Maps</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.mapLinkButton}
+                  onPress={() => Linking.openURL(`https://www.openstreetmap.org/?mlat=${tappedLocation.coords.latitude}&mlon=${tappedLocation.coords.longitude}#map=18/${tappedLocation.coords.latitude}/${tappedLocation.coords.longitude}`)}>
+                  <Text style={styles.mapLinkText}>Open in OpenStreetMap</Text>
+                </TouchableOpacity>
+              </View>
               {debugMode && (
                 <View style={styles.debugInfoContainer}>
                   <Text style={styles.debugInfoText}>
@@ -392,51 +399,16 @@ export default function SpeedLimitScreen() {
               )}
               
               {debugMode && currentSegment.properties && (
-                <View style={styles.debugSection}>
-                  <Text style={styles.debugSectionTitle}>OSM Properties:</Text>
-                  {Object.entries(currentSegment.properties).map(([key, value]) => (
-                    <View key={key} style={styles.infoRow}>
-                      <Text style={styles.debugInfoLabel}>{key}:</Text>
-                      <Text style={styles.debugInfoValue} numberOfLines={1} ellipsizeMode="tail">
-                        {JSON.stringify(value)}
-                      </Text>
-                    </View>
-                  ))}
+                <View style={styles.infoRow}>
+                  <Text style={styles.infoLabel}>Segment Properties:</Text>
+                  <Text style={styles.infoValue}>
+                    {JSON.stringify(currentSegment.properties, null, 2)}
+                  </Text>
                 </View>
               )}
-              )}
-              
-              {debugMode && currentSegment.tags && (
-                <View style={styles.tagsContainer}>
-                  <Text style={styles.tagsTitle}>OSM Tags:</Text>
-                  {Object.entries(currentSegment.tags).map(([key, value]) => (
-                    <View key={key} style={styles.tagRow}>
-                      <Text style={styles.tagKey}>{key}:</Text>
-                      <Text style={styles.tagValue}>{String(value)}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-          )}
-          
-          {debugMode && (!currentSegment || !tappedLocation) && (
-            <View style={styles.debugInfoContainer}>
-              <Text style={styles.debugInfoText}>
-                {!tappedLocation 
-                  ? 'No location data available' 
-                  : 'No matching OSM segment found for current location'}
-              </Text>
             </View>
           )}
         </View>
-        
-        {/* Error Message */}
-        {errorMsg && (
-          <View style={styles.errorContainer}>
-            <Text style={styles.errorText}>{errorMsg}</Text>
-          </View>
-        )}
       </View>
     </SafeAreaView>
   );
@@ -445,29 +417,27 @@ export default function SpeedLimitScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
-  },
-  contentContainer: {
-    flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
     padding: 20,
+    backgroundColor: '#f5f5f5',
   },
   debugContainer: {
     position: 'absolute',
-    top: 10,
-    right: 10,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    padding: 8,
-    borderRadius: 15,
-    zIndex: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
+    top: 40,
+    right: 20,
+    zIndex: 100,
   },
   debugToggleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     marginRight: 10,
+  },
+  debugInfoLabel: {
+    fontWeight: 'bold',
+    color: '#3498db',
+    fontSize: 12,
+    marginRight: 5,
   },
   debugText: {
     color: 'white',
@@ -485,6 +455,10 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: '600',
     fontSize: 12,
+  },
+  contentContainer: {
+    width: '100%',
+    alignItems: 'center',
   },
   speedLimitContainer: {
     marginBottom: 40,
@@ -627,6 +601,24 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#2c3e50',
     fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+    marginBottom: 10,
+  },
+  mapLinksContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    marginBottom: 10,
+  },
+  mapLinkButton: {
+    backgroundColor: '#3498db',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  mapLinkText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 12,
   },
   
   segmentInfo: {

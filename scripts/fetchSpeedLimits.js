@@ -6,25 +6,28 @@ const turf = require('@turf/turf');
 // Output file path
 const OUTPUT_FILE = path.join(__dirname, '../assets/data/speedLimits.json');
 
-// Bounding box for the entire N1 route in Mozambique
-// From the southern border to the northernmost point of N1
-const BOUNDING_BOX = {
-  minLon: 30.0,   // Westernmost point of N1 in Mozambique
-  minLat: -26.9,  // Southern border (south of Maputo)
-  maxLon: 35.0,   // Easternmost point of N1 in Mozambique
-  maxLat: -10.5   // Northernmost point of N1 in Mozambique (near Rovuma River)
-};
-
 // Overpass API URL
 const OVERPASS_URL = 'https://overpass-api.de/api/interpreter';
 
-// Query to get ways with speed limits in the bounding box
+// Query to get specifically the N1 highway in Mozambique
 const overpassQuery = `
-[out:json];
+[out:json][timeout:180];
+area["ISO3166-1"="MZ"][admin_level=2]->.mozambique;
+
+// First get all N1 ways
 (
-  way[highway][maxspeed](${BOUNDING_BOX.minLat},${BOUNDING_BOX.minLon},${BOUNDING_BOX.maxLat},${BOUNDING_BOX.maxLon});
-  way[highway][highway=trunk][!maxspeed](${BOUNDING_BOX.minLat},${BOUNDING_BOX.minLon},${BOUNDING_BOX.maxLat},${BOUNDING_BOX.maxLon});
+  way["highway"]["ref"="N1"](area.mozambique);
+  way["highway"]["name"~"N1"](area.mozambique);
+)->.n1_ways;
+
+// Get nodes of N1 ways
+(
+  node(w.n1_ways);
+  way(bn);
+  way["highway"="trunk"](bn);
 );
+
+// Output the results
 out body;
 >;
 out skel qt;
@@ -72,33 +75,44 @@ async function processSpeedLimits() {
     });
     
     const elements = response.data.elements || [];
-    console.log(`Found ${elements.length} road segments with speed limit data`);
-    
-    // Process each way
+    console.log(`Found ${elements.length} total elements from Overpass API`);
+
+    // Create a map of nodes with their coordinates for quick lookup
+    const nodes = {};
+    for (const element of elements) {
+      if (element.type === 'node') {
+        nodes[element.id] = [element.lon, element.lat];
+      }
+    }
+    console.log(`Mapped ${Object.keys(nodes).length} nodes`);
+
+    // Process each way to build segments with full geometry
     const speedLimits = [];
-    
     for (const element of elements) {
       if (element.type === 'way' && element.nodes && element.nodes.length > 1) {
-        // Get speed limit from tags or use default based on road type
-        let speedLimit = element.tags.maxspeed 
+        let speedLimit = element.tags.maxspeed
           ? parseSpeedLimit(element.tags.maxspeed)
           : null;
-          
-        // If no explicit speed limit, use default for the road type
+
         if (!speedLimit && element.tags.highway) {
-          speedLimit = DEFAULT_SPEED_LIMITS[element.tags.highway] || 60; // Default to 60 if type not found
+          speedLimit = DEFAULT_SPEED_LIMITS[element.tags.highway] || 60;
         }
-        
+
         if (speedLimit) {
-          // Store the way ID, coordinates, and speed limit
-          speedLimits.push({
-            id: element.id,
-            type: element.tags.highway,
-            name: element.tags.name || 'Unnamed Road',
-            speedLimit: speedLimit,
-            nodes: element.nodes,
-            geometry: element.geometry || []
-          });
+          const geometry = element.nodes
+            .map(nodeId => nodes[nodeId])
+            .filter(coord => coord); // Filter out any missing nodes
+
+          if (geometry.length > 1) {
+            speedLimits.push({
+              id: element.id,
+              type: element.tags.highway,
+              name: element.tags.name || 'Unnamed Road',
+              speedLimit: speedLimit,
+              tags: element.tags,
+              geometry: geometry,
+            });
+          }
         }
       }
     }
